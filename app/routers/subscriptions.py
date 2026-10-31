@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import joinedload
 from ..billing import add_period
 from ..crud import serialize
@@ -18,7 +18,7 @@ TEAM = Depends(roles("admin", "staff"))
 class LineIn(BaseModel):
     product_id: int
     variant_id: Optional[int] = None
-    quantity: float = 1
+    quantity: float = Field(1, gt=0)
 
 
 class SubIn(BaseModel):
@@ -96,6 +96,7 @@ def get_sub(sid: int, db=Depends(get_db), u=ANY):
 def create(body: SubIn, db=Depends(get_db), u=TEAM):
     plan = db.get(Plan, body.plan_id)
     check_plan(plan, body.start_date)
+    if body.expiry_date and body.expiry_date < body.start_date: raise HTTPException(422, "Expiry date cannot be before the start date")
     if not db.get(Customer, body.customer_id): raise HTTPException(404, "Customer not found")
     s = Subscription(customer_id=body.customer_id, plan_id=plan.id, start_date=body.start_date,
                      expiry_date=body.expiry_date or plan.end_date or add_period(body.start_date, "yearly") - timedelta(days=1),
