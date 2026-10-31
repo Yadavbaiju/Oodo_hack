@@ -3,13 +3,16 @@ from datetime import date, timedelta
 from .models import Invoice, InvoiceLine
 
 
-def add_period(d: date, period: str) -> date:
+def add_period(d: date, period: str, anchor_day: int = None) -> date:
+    """Start of the next period after d.
+    anchor_day is the subscription's original day-of-month (start_date.day). Passing it stops month-end
+    drift: from Jan 31 you get Feb 28 -> Mar 31 -> Apr 30, instead of getting stuck on the 28th forever."""
     if period == "daily": return d + timedelta(days=1)
     if period == "weekly": return d + timedelta(days=7)
     months = 1 if period == "monthly" else 12
     m = d.month - 1 + months
     y, m = d.year + m // 12, m % 12 + 1
-    return date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+    return date(y, m, min(anchor_day or d.day, calendar.monthrange(y, m)[1]))
 
 
 def terms_days(terms: str) -> int:
@@ -36,7 +39,8 @@ def build_invoice(db, sub, period_start: date, today: date, discounts: list):
     if db.query(Invoice.id).filter_by(subscription_id=sub.id, period_start=period_start).first():
         return None
     plan = sub.plan
-    period_end = add_period(period_start, plan.billing_period) - timedelta(days=1)
+    anchor = sub.start_date.day if sub.start_date else None
+    period_end = add_period(period_start, plan.billing_period, anchor) - timedelta(days=1)
     items = []
     if plan.price:
         items.append(dict(desc=f"{plan.name} - plan fee", pid=None, qty=1, unit=plan.price, rate=0.0))
@@ -70,14 +74,15 @@ def build_invoice(db, sub, period_start: date, today: date, discounts: list):
             if a > 0:
                 sub_disc += a; used.add(d.id)
                 disc_lines.append((f"Discount: {d.name}", a))
-    if after_product > 0:
+    if after_product > 0 and sub_disc:
         tax = tax * (1 - sub_disc / after_product)  # tax follows the discounted amount
+    tax = round(tax, 2)                              # round ONCE; this exact value is stored and used in the total
     discount_total = round(sum(i["disc"] for i in items) + sub_disc, 2)
 
     inv = Invoice(subscription_id=sub.id, customer_id=sub.customer_id, period_start=period_start, period_end=period_end,
                   issue_date=today, due_date=today + timedelta(days=terms_days(sub.payment_terms)), status="draft",
-                  subtotal=subtotal, discount_total=discount_total, tax_total=round(tax, 2),
-                  total=round(subtotal - discount_total + tax, 2))
+                  subtotal=subtotal, discount_total=discount_total, tax_total=tax,
+                  total=round(subtotal - discount_total + tax, 2))  # always == subtotal - discount_total + tax_total
     db.add(inv); db.flush()
     inv.number = f"INV-{inv.id:06d}"
     for i in items:

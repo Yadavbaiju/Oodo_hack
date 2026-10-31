@@ -104,7 +104,7 @@ def run_billing(as_of: Optional[date] = None, auto_confirm: bool = False, db=Dep
             if inv:
                 if auto_confirm: inv.status = "confirmed"
                 created.append(inv.id)
-            s.next_billing_date = add_period(s.next_billing_date, s.plan.billing_period)
+            s.next_billing_date = add_period(s.next_billing_date, s.plan.billing_period, s.start_date.day)
             guard += 1
     closed = db.query(Subscription).join(Plan, Plan.id == Subscription.plan_id).filter(
         Subscription.status == "active", Plan.auto_close == True, Subscription.expiry_date < today).all()

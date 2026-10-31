@@ -158,7 +158,7 @@ def resume(sid: int, db=Depends(get_db), u=ANY):
     if not s.paused: raise HTTPException(400, "Subscription is not paused")
     s.paused = False
     while s.next_billing_date < date.today():   # skip paused periods instead of back-billing them
-        s.next_billing_date = add_period(s.next_billing_date, s.plan.billing_period)
+        s.next_billing_date = add_period(s.next_billing_date, s.plan.billing_period, s.start_date.day)
     db.commit(); return ser(s)
 
 
