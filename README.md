@@ -26,3 +26,11 @@ FastAPI + SQLAlchemy (SQLite by default, set DATABASE_URL for Postgres) + JWT au
 - `app/routers/` auth, subscriptions, invoices+payments+billing run, reports
 - `app/crud.py` role-protected CRUD used for products, plans, taxes, discounts, templates, customers
 Emails (reset links, sent invoices) print to the console and `outbox.log`; set `SMTP_HOST/SMTP_USER/SMTP_PASS` to send for real.
+
+## Key Features
+- User authentication with role-based access (Admin, Staff, Customer).
+- Product and subscription plan management.
+- Quotation and subscription lifecycle management.
+- Automated invoicing with tax and discount calculations.
+- Payment recording and tracking.
+- Revenue reports and subscription dashboards.
