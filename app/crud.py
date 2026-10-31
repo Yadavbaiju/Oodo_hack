@@ -34,6 +34,35 @@ def coerce(model, data: dict) -> dict:
     return out
 
 
+import re
+
+NON_NEGATIVE = {"sales_price", "cost_price", "extra_price", "price", "value", "min_purchase", "min_quantity", "usage_limit", "validity_days", "rate"}
+CHOICES = {"billing_period": ("daily", "weekly", "monthly", "yearly"), "kind": ("fixed", "percent"), "scope": ("product", "subscription")}
+
+
+def validate(model, data: dict):
+    """Business-rule checks shared by every CRUD endpoint. Raises HTTP 422 with a clear message."""
+    for f in NON_NEGATIVE:
+        v = data.get(f)
+        if v is not None and v < 0: raise HTTPException(422, f"{f.replace('_', ' ').capitalize()} cannot be negative")
+    for f, ok in CHOICES.items():
+        v = data.get(f)
+        if v is not None and v not in ok: raise HTTPException(422, f"{f.replace('_', ' ').capitalize()} must be one of: {', '.join(ok)}")
+    if "name" in data and not str(data["name"] or "").strip(): raise HTTPException(422, "Name is required")
+    if data.get("min_quantity") is not None and model.__name__ == "Plan" and data["min_quantity"] < 1:
+        raise HTTPException(422, "Minimum quantity must be at least 1")
+    if data.get("kind") == "percent" and (data.get("value") or 0) > 100: raise HTTPException(422, "A percentage discount cannot exceed 100")
+    if model.__name__ == "Tax" and (data.get("rate") or 0) > 100: raise HTTPException(422, "Tax rate cannot exceed 100%")
+    if data.get("start_date") and data.get("end_date") and data["end_date"] < data["start_date"]:
+        raise HTTPException(422, "End date cannot be before the start date")
+    if data.get("email") and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", data["email"]):
+        raise HTTPException(422, "Enter a valid email address")
+
+
+def serialize_raw(o):
+    return {c.name: getattr(o, c.name) for c in o.__table__.columns}
+
+
 def crud_router(model, prefix, read=("admin", "staff", "customer"), write=("admin",), filters=()):
     r = APIRouter(prefix="/api/" + prefix, tags=[prefix])
 
@@ -57,6 +86,7 @@ def crud_router(model, prefix, read=("admin", "staff", "customer"), write=("admi
     @r.post("")
     def create(body: dict, db=Depends(get_db), u=Depends(roles(*write))):
         data = {k: v for k, v in coerce(model, body).items() if v is not None}
+        validate(model, data)
         o = model(**data)
         db.add(o); db.commit(); db.refresh(o)
         return serialize(o)
@@ -65,7 +95,9 @@ def crud_router(model, prefix, read=("admin", "staff", "customer"), write=("admi
     def update(oid: int, body: dict, db=Depends(get_db), u=Depends(roles(*write))):
         o = db.get(model, oid)
         if not o: raise HTTPException(404, "Not found")
-        for k, v in coerce(model, body).items(): setattr(o, k, v)
+        data = coerce(model, body)
+        validate(model, {**serialize_raw(o), **data})
+        for k, v in data.items(): setattr(o, k, v)
         db.commit(); db.refresh(o)
         return serialize(o)
 
