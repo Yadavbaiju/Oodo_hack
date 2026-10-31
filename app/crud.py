@@ -5,9 +5,11 @@ from .database import get_db
 from .deps import roles
 
 
-def serialize(o):
+def serialize(o, hide=()):
     out = {}
     for c in o.__table__.columns:
+        if c.name in hide:
+            continue
         v = getattr(o, c.name)
         out[c.name] = v.isoformat() if hasattr(v, "isoformat") else v
     return out
@@ -64,7 +66,9 @@ def serialize_raw(o):
     return {c.name: getattr(o, c.name) for c in o.__table__.columns}
 
 
-def crud_router(model, prefix, read=("admin", "staff", "customer"), write=("admin",), filters=()):
+def crud_router(model, prefix, read=("admin", "staff", "customer"), write=("admin",), filters=(), hide=None):
+    """hide = {role: (field, ...)} -> those fields are left out of responses for that role."""
+    hide = hide or {}
     r = APIRouter(prefix="/api/" + prefix, tags=[prefix])
 
     @r.get("")
@@ -76,13 +80,13 @@ def crud_router(model, prefix, read=("admin", "staff", "customer"), write=("admi
                 qs = qs.filter(getattr(model, f) == coerce(model, {f: v})[f])
         total = qs.count()
         items = qs.order_by(model.id.desc()).offset((max(page, 1) - 1) * size).limit(min(size, 200)).all()
-        return {"items": [serialize(i) for i in items], "total": total, "page": page}
+        return {"items": [serialize(i, hide.get(u.role, ())) for i in items], "total": total, "page": page}
 
     @r.get("/{oid}")
     def get_item(oid: int, db=Depends(get_db), u=Depends(roles(*read))):
         o = db.get(model, oid)
         if not o: raise HTTPException(404, "Not found")
-        return serialize(o)
+        return serialize(o, hide.get(u.role, ()))
 
     @r.post("")
     def create(body: dict, db=Depends(get_db), u=Depends(roles(*write))):
@@ -90,7 +94,7 @@ def crud_router(model, prefix, read=("admin", "staff", "customer"), write=("admi
         validate(model, data)
         o = model(**data)
         db.add(o); db.commit(); db.refresh(o)
-        return serialize(o)
+        return serialize(o, hide.get(u.role, ()))
 
     @r.put("/{oid}")
     def update(oid: int, body: dict, db=Depends(get_db), u=Depends(roles(*write))):
@@ -100,7 +104,7 @@ def crud_router(model, prefix, read=("admin", "staff", "customer"), write=("admi
         validate(model, {**serialize_raw(o), **data})
         for k, v in data.items(): setattr(o, k, v)
         db.commit(); db.refresh(o)
-        return serialize(o)
+        return serialize(o, hide.get(u.role, ()))
 
     @r.delete("/{oid}")
     def delete(oid: int, db=Depends(get_db), u=Depends(roles(*write))):

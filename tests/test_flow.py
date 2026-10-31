@@ -46,6 +46,12 @@ def test_full_flow():
         assert c.get("/api/invoices/%d" % inv["id"], headers=H).json()["status"] == "paid"
         # customer sees only own data
         assert c.get("/api/invoices", headers=CH).json()["total"] == 1
+        # customers must not see margin data; staff/admin still do; health check works
+        cp = c.get("/api/products", headers=CH).json()["items"][0]
+        assert "cost_price" not in cp and "notes" not in cp and "sales_price" in cp
+        assert "cost_price" not in c.get("/api/products/%d" % crm["id"], headers=CH).json()
+        assert "cost_price" in c.get("/api/products", headers=H).json()["items"][0]
+        assert c.get("/health").json() == {"status": "ok"}
         sm = c.get("/api/reports/summary", headers=H).json()
         assert sm["active_subscriptions"] == 1 and sm["revenue_collected"] == 8283.6 and sm["outstanding"] == 0
         # forgot password
