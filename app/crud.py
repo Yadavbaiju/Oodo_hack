@@ -44,14 +44,15 @@ def validate(model, data: dict):
     """Business-rule checks shared by every CRUD endpoint. Raises HTTP 422 with a clear message."""
     for f in NON_NEGATIVE:
         v = data.get(f)
-        if v is not None and v < 0: raise HTTPException(422, f"{f.replace('_', ' ').capitalize()} cannot be negative")
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v < 0:  # numbers only: Variant.value is text like "Odoo"
+            raise HTTPException(422, f"{f.replace('_', ' ').capitalize()} cannot be negative")
     for f, ok in CHOICES.items():
         v = data.get(f)
         if v is not None and v not in ok: raise HTTPException(422, f"{f.replace('_', ' ').capitalize()} must be one of: {', '.join(ok)}")
     if "name" in data and not str(data["name"] or "").strip(): raise HTTPException(422, "Name is required")
     if data.get("min_quantity") is not None and model.__name__ == "Plan" and data["min_quantity"] < 1:
         raise HTTPException(422, "Minimum quantity must be at least 1")
-    if data.get("kind") == "percent" and (data.get("value") or 0) > 100: raise HTTPException(422, "A percentage discount cannot exceed 100")
+    if data.get("kind") == "percent" and isinstance(data.get("value"), (int, float)) and data["value"] > 100: raise HTTPException(422, "A percentage discount cannot exceed 100")
     if model.__name__ == "Tax" and (data.get("rate") or 0) > 100: raise HTTPException(422, "Tax rate cannot exceed 100%")
     if data.get("start_date") and data.get("end_date") and data["end_date"] < data["start_date"]:
         raise HTTPException(422, "End date cannot be before the start date")
