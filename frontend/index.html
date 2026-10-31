@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Brightloop Billing</title>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#edf1f5;--card:#fff;--fg:#0d1b2a;--mut:#5b6b7c;--pri:#0b6e8a;--bd:#d5dde6;--ok:#17803d;--bad:#c2410c;--side:#0d1b2a}
+@media(prefers-color-scheme:dark){:root{--bg:#0b1119;--card:#131c27;--fg:#e6edf5;--mut:#8fa1b3;--bd:#243242;--pri:#38b2d4;--side:#070c12}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 "Public Sans",system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:var(--pri);color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer}
+button.ghost{background:transparent;color:var(--pri);border:1px solid var(--bd)}button.sm{padding:3px 8px;font-size:12px;margin-right:4px}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--pri);outline-offset:2px}
+input,select,textarea{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:6px;background:var(--card);margin-top:3px}
+label{display:block;margin-bottom:10px;color:var(--mut);font-size:13px;text-transform:capitalize}label input[type=checkbox]{width:auto}
+#app{display:flex;min-height:100vh}nav{width:210px;background:var(--side);color:#cfe0ee;padding:18px 10px;flex-shrink:0}
+nav h1{font-size:17px;margin:0 8px 16px;color:#fff}nav a{display:block;padding:8px 10px;border-radius:6px;color:inherit;text-decoration:none;cursor:pointer}
+nav a.on,nav a:hover{background:#1c2d40;color:#fff}main{flex:1;padding:22px;min-width:0}
+.bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap}h2{margin:0}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px}
+.kpi b{display:block;font-size:26px;margin-top:4px}.kpi span{color:var(--mut)}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:8px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--bd);white-space:nowrap}th{color:var(--mut);font-weight:500}
+.tag{padding:2px 8px;border-radius:99px;background:var(--bd);font-size:12px}.paid,.active{background:#d3f0dd;color:#0f5b2b}.overdue{background:#fde0d0;color:#9a3412}
+#modal{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;padding:16px;z-index:9}
+#modal .card{width:min(560px,100%);max-height:90vh;overflow:auto}#err{color:var(--bad);margin:6px 0;min-height:18px}
+.auth{max-width:380px;margin:9vh auto;padding:0 16px}.auth h1{margin-bottom:4px}.row{display:flex;gap:8px}.row>*{flex:1}
+.link{color:var(--pri);cursor:pointer;background:none;padding:0}.filters{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}.filters>*{width:auto}
+@media(max-width:700px){#app{flex-direction:column}nav{width:auto;display:flex;overflow-x:auto;padding:8px}nav h1{display:none}nav a{white-space:nowrap}}
+</style></head><body>
+<div id="root"></div><div id="modal"><div class="card" id="mbox"></div></div>
+<script>
+let T=localStorage.getItem('t'),ME=null,PAGE='',FILTER={};
+const $=s=>document.querySelector(s),money=n=>Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function api(p,o={}){const r=await fetch('/api/'+p,{method:o.method||'GET',headers:{'Content-Type':'application/json',...(T?{Authorization:'Bearer '+T}:{})},body:o.body?JSON.stringify(o.body):undefined});
+ const d=r.headers.get('content-type')?.includes('json')?await r.json():await r.text();
+ if(r.status===401&&T){logout();throw new Error('Session expired')}
+ if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:Array.isArray(d.detail)?d.detail.map(e=>e.loc.slice(1).join('.')+': '+e.msg).join('; '):'Request failed');return d}
+const fail=e=>{const x=$('#err');x?x.textContent=e.message:alert(e.message)};
+const close=()=>$('#modal').style.display='none';
+function open(html){$('#mbox').innerHTML=html;$('#modal').style.display='flex'}
+function logout(){localStorage.removeItem('t');T=null;ME=null;auth()}
+
+/* ---------- auth ---------- */
+function auth(mode){
+ const reset=location.hash.startsWith('#reset=')?location.hash.slice(7):null;mode=reset?'reset':mode||'login';
+ const f={login:['email','password'],signup:['name','email','password'],forgot:['email'],reset:['password']}[mode];
+ const t={login:'Sign in',signup:'Create account',forgot:'Send reset link',reset:'Set new password'}[mode];
+ $('#root').innerHTML=`<div class="auth"><h1>Brightloop</h1><p style="color:var(--mut)">Subscriptions, invoices and payments in one place.</p><div class="card">
+ ${f.map(n=>`<label>${n}<input id="f_${n}" type="${n==='password'?'password':n==='email'?'email':'text'}"></label>`).join('')}
+ ${mode==='signup'||mode==='reset'?'<small style="color:var(--mut)">More than 8 characters with an uppercase letter, a lowercase letter and a special character.</small>':''}
+ <div id="err"></div><button id="go" style="width:100%">${t}</button>
+ <p style="text-align:center;margin-bottom:0">${mode==='login'?'<span class=link onclick="auth(\'signup\')">Create account</span> · <span class=link onclick="auth(\'forgot\')">Forgot password?</span>':'<span class=link onclick="location.hash=\'\';auth(\'login\')">Back to sign in</span>'}</p></div></div>`;
+ $('#go').onclick=async()=>{const b={};f.forEach(n=>b[n]=$('#f_'+n).value);
+  try{if(mode==='forgot'){const r=await api('auth/forgot-password',{method:'POST',body:b});$('#err').style.color='var(--ok)';$('#err').textContent=r.message;return}
+   if(mode==='reset'){await api('auth/reset-password',{method:'POST',body:{token:reset,password:b.password}});location.hash='';auth('login');return}
+   const r=await api('auth/'+mode,{method:'POST',body:b});T=r.token;localStorage.setItem('t',T);ME=r.user;shell()}catch(e){fail(e)}}}
+
+/* ---------- entity config (generic CRUD pages) ---------- */
+const ID=(path,l)=>({path,l});
+const ENT={
+ customers:{title:'Customers',path:'customers',cols:['id','name','email','company','phone'],f:[['name'],['email'],['phone'],['company'],['address','textarea']],w:['admin','staff']},
+ products:{title:'Products',path:'products',cols:['id','name','type','sales_price','cost_price','tax_id'],f:[['name'],['type',['software','service','physical']],['sales_price','number'],['cost_price','number'],['tax_id','number'],['notes','textarea']],w:['admin']},
+ variants:{title:'Product variants',path:'variants',cols:['id','product_id','attribute','value','extra_price'],f:[['product_id','number'],['attribute'],['value'],['extra_price','number']],w:['admin']},
+ plans:{title:'Plans',path:'plans',cols:['id','name','price','billing_period','min_quantity','start_date','end_date','auto_close','allow_pause','allow_renew','allow_close'],
+  f:[['name'],['price','number'],['billing_period',['daily','weekly','monthly','yearly']],['min_quantity','number'],['start_date','date'],['end_date','date'],['auto_close','check'],['allow_close','check'],['allow_pause','check'],['allow_renew','check']],w:['admin']},
+ taxes:{title:'Taxes',path:'taxes',cols:['id','name','rate'],f:[['name'],['rate','number']],w:['admin']},
+ discounts:{title:'Discounts',path:'discounts',cols:['id','name','kind','value','scope','min_purchase','min_quantity','start_date','end_date','usage_limit','used_count'],
+  f:[['name'],['kind',['percent','fixed']],['value','number'],['scope',['subscription','product']],['product_id','number'],['subscription_id','number'],['min_purchase','number'],['min_quantity','number'],['start_date','date'],['end_date','date'],['usage_limit','number']],w:['admin']},
+ templates:{title:'Quotation templates',path:'quotation-templates',cols:['id','name','plan_id','validity_days'],f:[['name'],['plan_id','number'],['validity_days','number']],w:['admin','staff']},
+ 'template-lines':{title:'Template lines',path:'template-lines',cols:['id','template_id','product_id','variant_id','quantity'],f:[['template_id','number'],['product_id','number'],['variant_id','number'],['quantity','number']],w:['admin','staff']},
+};
+const NAV={admin:['dashboard','subscriptions','invoices','payments','customers','products','variants','plans','taxes','discounts','templates','template-lines','staff'],
+ staff:['dashboard','subscriptions','invoices','payments','customers','products','plans','templates','template-lines'],customer:['subscriptions','invoices','payments']};
+
+function shell(){
+ $('#root').innerHTML=`<div id="app"><nav><h1>Brightloop</h1>${NAV[ME.role].map(p=>`<a data-p="${p}" onclick="go('${p}')">${p.replace('-',' ').replace(/^./,c=>c.toUpperCase())}</a>`).join('')}
+ <a onclick="logout()" style="margin-top:14px;color:#8fa1b3">Sign out (${esc(ME.email)})</a></nav><main id="main"></main></div>`;go(NAV[ME.role][0])}
+async function go(p){PAGE=p;FILTER={};document.querySelectorAll('nav a[data-p]').forEach(a=>a.classList.toggle('on',a.dataset.p===p));
+ try{await({dashboard,subscriptions:subs,invoices:invs,payments:pays,staff}[p]||(()=>ent(p)))()}catch(e){$('#main').innerHTML=`<p style="color:var(--bad)">${esc(e.message)}</p>`}}
+const tag=v=>`<span class="tag ${v}">${esc(v)}</span>`;
+function table(cols,rows,act){return `<div class="tw"><table><tr>${cols.map(c=>`<th>${c.replace(/_/g,' ')}</th>`).join('')}${act?'<th></th>':''}</tr>${rows.map(r=>`<tr>${cols.map(c=>`<td>${
+ ['status'].includes(c)?tag(r[c]):typeof r[c]==='number'&&/price|amount|total|outstanding|paid|value/.test(c)?money(r[c]):typeof r[c]==='boolean'?(r[c]?'yes':'no'):esc(r[c])}</td>`).join('')}${act?`<td>${act(r)}</td>`:''}</tr>`).join('')||`<tr><td colspan=20 style="color:var(--mut)">Nothing here yet.</td></tr>`}</table></div>`}
+
+/* ---------- form modal ---------- */
+function form(title,fields,onSubmit,extra='',okText='Save'){
+ const inp=([n,t])=>Array.isArray(t)?`<select name="${n}">${t.map(o=>{o=Array.isArray(o)?o:[o,o];return `<option value="${esc(o[0])}">${esc(o[1])}</option>`}).join('')}</select>`
+  :t==='check'?`<input type="checkbox" name="${n}">`:t==='textarea'?`<textarea name="${n}"></textarea>`:`<input name="${n}" type="${t||'text'}" step="any" ${t==='date'&&n==='date'?`value="${new Date().toISOString().slice(0,10)}"`:''}>`;
+ open(`<h3>${title}</h3><form id="fm">${fields.map(f=>`<label>${(f[2]||f[0]).replace(/_/g,' ')}${inp(f)}</label>`).join('')}${extra}<div id="err"></div>
+ <div class="row"><button type="button" class="ghost" onclick="close()">Cancel</button><button>${okText}</button></div></form>`);
+ $('#fm').onsubmit=async e=>{e.preventDefault();const d={};fields.forEach(([n,t])=>{const el=e.target.elements[n];d[n]=t==='check'?el.checked:t==='number'?(el.value===''?null:Number(el.value)):el.value});
+  try{await onSubmit(d,e.target);close()}catch(x){fail(x)}}}
+async function opts(path,label){const d=await api(path+'?size=200');return d.items.map(i=>[i.id,`#${i.id} ${label(i)}`])}
+
+/* ---------- generic entity page ---------- */
+async function ent(k){const E=ENT[k],d=await api(E.path+'?size=100'),w=E.w.includes(ME.role);
+ $('#main').innerHTML=`<div class="bar"><h2>${E.title} <small style="color:var(--mut)">(${d.total})</small></h2>${w?'<button onclick="newEnt(\''+k+'\')">New</button>':''}</div>`+
+  table(E.cols,d.items,w?r=>`<button class="sm ghost" onclick="editEnt('${k}',${r.id})">Edit</button><button class="sm ghost" onclick="delEnt('${k}',${r.id})">Delete</button>`:null)}
+const newEnt=k=>form('New '+ENT[k].title.toLowerCase(),ENT[k].f,async d=>{await api(ENT[k].path,{method:'POST',body:d});ent(k)});
+async function editEnt(k,id){const r=await api(ENT[k].path+'/'+id);form('Edit',ENT[k].f,async d=>{await api(ENT[k].path+'/'+id,{method:'PUT',body:d});ent(k)});
+ ENT[k].f.forEach(([n,t])=>{const el=$('#fm').elements[n];t==='check'?el.checked=!!r[n]:el.value=r[n]??''})}
+async function delEnt(k,id){if(confirm('Delete this record?')){try{await api(ENT[k].path+'/'+id,{method:'DELETE'});ent(k)}catch(e){fail(e)}}}
+
+/* ---------- dashboard ---------- */
+async function dashboard(){const s=await api('reports/summary'+(FILTER.f?`?date_from=${FILTER.f}&date_to=${FILTER.t}`:''));
+ const mx=Math.max(1,...s.monthly_revenue.map(m=>m.amount));
+ $('#main').innerHTML=`<div class="bar"><h2>Overview</h2><div class="filters"><input type="date" id="df" value="${FILTER.f||''}"><input type="date" id="dt" value="${FILTER.t||''}"><button onclick="FILTER={f:$('#df').value,t:$('#dt').value};dashboard()">Apply dates</button>
+ <button class="ghost" onclick="FILTER={};dashboard()">Clear</button></div></div>
+ <div class="grid"><div class="card kpi"><span>Active subscriptions</span><b>${s.active_subscriptions}</b></div><div class="card kpi"><span>Monthly recurring revenue</span><b>${money(s.mrr)}</b></div>
+ <div class="card kpi"><span>Revenue collected</span><b>${money(s.revenue_collected)}</b></div><div class="card kpi"><span>Outstanding</span><b>${money(s.outstanding)}</b></div>
+ <div class="card kpi"><span>Overdue invoices</span><b style="color:var(--bad)">${s.overdue_count}</b><span>${money(s.overdue_amount)} owed</span></div></div>
+ <div class="grid"><div class="card"><b>Collected per month</b><div style="display:flex;align-items:flex-end;gap:6px;height:120px;margin-top:10px">${s.monthly_revenue.map(m=>`<div title="${m.month}: ${money(m.amount)}" style="flex:1;background:var(--pri);height:${Math.max(4,m.amount/mx*100)}%;border-radius:3px 3px 0 0"></div>`).join('')||'<span style="color:var(--mut)">No payments yet</span>'}</div></div>
+ <div class="card"><b>Subscriptions by status</b><p>${Object.entries(s.subscriptions_by_status).map(([k,v])=>tag(k)+' '+v).join(' &nbsp; ')||'None yet'}</p><b>Invoices by status</b><p>${Object.entries(s.invoices_by_status).map(([k,v])=>tag(k)+' '+v).join(' &nbsp; ')||'None yet'}</p>
+ <button class="ghost" onclick="go('invoices');setTimeout(()=>{FILTER.overdue=1;invs()},50)">Review overdue invoices</button></div></div>`}
+
+/* ---------- subscriptions ---------- */
+async function subs(){const qs=new URLSearchParams({size:100,...(FILTER.status?{status:FILTER.status}:{}),...(FILTER.q?{q:FILTER.q}:{})});const d=await api('subscriptions?'+qs),t=ME.role!=='customer';
+ $('#main').innerHTML=`<div class="bar"><h2>Subscriptions <small style="color:var(--mut)">(${d.total})</small></h2>${t?'<div><button class="ghost" onclick="newFromTpl()">From template</button> <button onclick="newSub()">New</button></div>':''}</div>
+ <div class="filters"><select onchange="FILTER.status=this.value;subs()"><option value="">All statuses</option>${['draft','quotation','confirmed','active','closed'].map(s=>`<option ${FILTER.status===s?'selected':''}>${s}</option>`)}</select>
+ <input placeholder="Search number" value="${esc(FILTER.q||'')}" onchange="FILTER.q=this.value;subs()"></div>`+
+ table(['number','customer_name','plan_name','start_date','expiry_date','payment_terms','status','paused'],d.items,r=>`<button class="sm ghost" onclick="viewSub(${r.id})">View</button>`+
+  (t&&['draft','quotation','confirmed'].includes(r.status)?`<button class="sm" onclick="act('subscriptions/${r.id}/advance',subs)">Advance</button>`:'')+
+  (r.status==='active'?(r.paused?`<button class="sm ghost" onclick="act('subscriptions/${r.id}/resume',subs)">Resume</button>`:`<button class="sm ghost" onclick="act('subscriptions/${r.id}/pause',subs)">Pause</button>`):'')+
+  (r.status!=='closed'?`<button class="sm ghost" onclick="act('subscriptions/${r.id}/close',subs)">Close</button>`:'')+`<button class="sm ghost" onclick="act('subscriptions/${r.id}/renew',subs)">Renew</button>`)}
+async function act(p,reload,msg){try{const r=await api(p,{method:'POST'});if(msg)alert(msg(r));reload()}catch(e){alert(e.message)}}
+async function viewSub(id){const s=await api('subscriptions/'+id);open(`<h3>${s.number} ${tag(s.status)}</h3><p>${esc(s.customer_name)} · ${esc(s.plan_name)} · ${s.start_date} to ${s.expiry_date} · ${esc(s.payment_terms)}${s.quote_valid_until?` · quote valid until ${s.quote_valid_until}`:''}</p>
+ ${table(['product_name','variant','quantity','unit_price','tax_rate','amount'],s.lines)}<p><b>Lines total ${money(s.total)}</b> (before tax and discounts)</p><button class="ghost" onclick="close()">Close</button>`)}
+async function lineRow(P,V){return `<div class="row ln" style="margin-bottom:6px"><select>${P.map(p=>`<option value="${p[0]}">${esc(p[1])}</option>`)}</select><select><option value="">No variant</option>${V.map(v=>`<option value="${v[0]}">${esc(v[1])}</option>`)}</select><input type="number" value="1" min="1" step="any"></div>`}
+async function newSub(){const [C,Pl,P,V]=await Promise.all([opts('customers',c=>c.name),opts('plans',p=>`${p.name} (${p.billing_period})`),opts('products',p=>p.name),opts('variants',v=>`${v.attribute}: ${v.value} (+${v.extra_price})`)]);
+ form('New subscription',[['customer_id',C,'customer'],['plan_id',Pl,'plan'],['start_date','date'],['expiry_date','date','expiry date (optional)'],['payment_terms',['Net 30','Net 15','Net 7','Immediate']]],async(d,f)=>{
+  d.customer_id=+d.customer_id;d.plan_id=+d.plan_id;d.expiry_date=d.expiry_date||null;
+  d.lines=[...f.querySelectorAll('.ln')].map(r=>{const s=r.querySelectorAll('select');return{product_id:+s[0].value,variant_id:s[1].value?+s[1].value:null,quantity:+r.querySelector('input').value}});
+  await api('subscriptions',{method:'POST',body:d});subs()},`<b>Lines</b><div id="lines" style="margin:6px 0">${await lineRow(P,V)}</div><button type="button" class="ghost sm" id="al">Add line</button>`);
+ $('#al').onclick=async()=>$('#lines').insertAdjacentHTML('beforeend',await lineRow(P,V))}
+async function newFromTpl(){const [T,C]=await Promise.all([opts('quotation-templates',t=>t.name),opts('customers',c=>c.name)]);
+ form('Subscription from template',[['template_id',T,'template'],['customer_id',C,'customer'],['start_date','date'],['payment_terms',['Net 30','Net 15','Net 7','Immediate']]],async d=>{d.template_id=+d.template_id;d.customer_id=+d.customer_id;await api('subscriptions/from-template',{method:'POST',body:d});subs()})}
+
+/* ---------- invoices & payments ---------- */
+async function invs(){const qs=new URLSearchParams({size:100,...(FILTER.status?{status:FILTER.status}:{}),...(FILTER.overdue?{overdue:true}:{}),...(FILTER.q?{q:FILTER.q}:{})});const d=await api('invoices?'+qs),t=ME.role!=='customer';
+ $('#main').innerHTML=`<div class="bar"><h2>Invoices <small style="color:var(--mut)">(${d.total})</small></h2>${t?'<button onclick="runBilling()">Run billing</button>':''}</div>
+ <div class="filters"><select onchange="FILTER.status=this.value;invs()"><option value="">All statuses</option>${['draft','confirmed','paid','cancelled'].map(s=>`<option ${FILTER.status===s?'selected':''}>${s}</option>`)}</select>
+ <label style="margin:0;display:flex;align-items:center;gap:6px"><input type="checkbox" ${FILTER.overdue?'checked':''} onchange="FILTER.overdue=this.checked;invs()"> Overdue only</label>
+ <input placeholder="Search number" value="${esc(FILTER.q||'')}" onchange="FILTER.q=this.value;invs()"></div>`+
+ table(['number','customer_name','issue_date','due_date','status','total','amount_paid','outstanding'],d.items.map(i=>({...i,status:i.overdue?'overdue':i.status})),r=>`<button class="sm ghost" onclick="viewInv(${r.id})">View</button><button class="sm ghost" onclick="printInv(${r.id})">Print</button>`+
+  (t?(r.status==='draft'?`<button class="sm" onclick="act('invoices/${r.id}/confirm',invs)">Confirm</button>`:'')+((r.status==='confirmed'||r.status==='overdue')?`<button class="sm" onclick="payForm(${r.id},${r.outstanding})">Pay</button><button class="sm ghost" onclick="act('invoices/${r.id}/send',invs,()=>'Invoice sent')">Send</button>`:'')+
+  (!['paid','cancelled'].includes(r.status)?`<button class="sm ghost" onclick="act('invoices/${r.id}/cancel',invs)">Cancel</button>`:''):''))}
+async function runBilling(){if(!confirm('Create invoices for every subscription that is due?'))return;await act('billing/run?auto_confirm=false',invs,r=>`${r.invoices_created} invoice(s) created for ${r.subscriptions_billed} subscription(s). ${r.auto_closed} auto-closed.`)}
+async function viewInv(id){const i=await api('invoices/'+id);open(`<h3>${i.number} ${tag(i.overdue?'overdue':i.status)}</h3><p>${esc(i.customer_name)} · issued ${i.issue_date} · due ${i.due_date}</p>${table(['description','quantity','unit_price','tax_rate','amount'],i.lines)}
+ <p>Subtotal ${money(i.subtotal)} · Discount −${money(i.discount_total)} · Tax ${money(i.tax_total)}<br><b>Total ${money(i.total)}</b> · Paid ${money(i.amount_paid)}</p><b>Payments</b>${table(['date','method','amount','note'],i.payments)}<p><button class="ghost" onclick="close()">Close</button></p>`)}
+async function printInv(id){const h=await api('invoices/'+id+'/print'),w=window.open('','_blank');w.document.write(h);w.document.close()}
+const payForm=(id,out)=>form('Record payment',[['method',['bank transfer','card','UPI','cash','cheque']],['amount','number'],['date','date'],['note','textarea']],async d=>{d.invoice_id=id;await api('payments',{method:'POST',body:d});invs()},'','Record payment')||($('#fm').elements.amount.value=out);
+async function pays(){const d=await api('payments?size=100');$('#main').innerHTML=`<div class="bar"><h2>Payments <small style="color:var(--mut)">(${d.total})</small></h2></div>`+table(['date','invoice_number','method','amount','note'],d.items)}
+async function staff(){const d=await api('staff');$('#main').innerHTML=`<div class="bar"><h2>Staff</h2><button onclick="newStaff()">Add staff member</button></div>`+table(['id','name','email','role'],d.items)}
+const newStaff=()=>form('Add staff member',[['name'],['email','email'],['password','password']],async d=>{await api('staff',{method:'POST',body:d});staff()});
+
+(async()=>{if(location.hash.startsWith('#reset='))return auth();if(T){try{ME=await api('me');return shell()}catch(e){}}auth()})();
+</script></body></html>
