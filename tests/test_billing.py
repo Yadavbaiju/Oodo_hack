@@ -1,4 +1,6 @@
 """Unit tests for the invoice engine: month-end date drift and rounding. No database needed."""
+import os
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test_flow.db")
 import random
 from datetime import date
 from types import SimpleNamespace as NS
