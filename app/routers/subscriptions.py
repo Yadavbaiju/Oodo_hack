@@ -86,6 +86,54 @@ def list_subs(status: str = None, customer_id: int = None, q: str = None, page: 
     items = qs.order_by(Subscription.id.desc()).offset((max(page, 1) - 1) * size).limit(min(size, 200)).all()
     return {"items": [ser(s) for s in items], "total": total, "page": page}
 
+@router.get("/expiry-alerts")
+def expiry_alerts(db=Depends(get_db), u=ANY):
+    today = date.today()
+    limit_date = today + timedelta(days=30)
+
+    query = db.query(Subscription).options(
+        joinedload(Subscription.customer),
+        joinedload(Subscription.plan)
+    ).filter(
+        Subscription.status.in_(["active", "confirmed"]),
+        Subscription.expiry_date.isnot(None),
+        Subscription.expiry_date <= limit_date
+    )
+
+    # Customers can only see their own subscription alerts
+    if u.role == "customer":
+        query = query.filter(
+            Subscription.customer_id == my_customer_id(db, u)
+        )
+
+    subscriptions = query.order_by(Subscription.expiry_date.asc()).all()
+
+    items = []
+    for s in subscriptions:
+        days_left = (s.expiry_date - today).days
+
+        item = ser(s)
+        item["days_remaining"] = days_left
+
+        if days_left < 0:
+            item["alert_type"] = "expired"
+        elif days_left <= 7:
+            item["alert_type"] = "expiring_soon"
+        else:
+            item["alert_type"] = "upcoming"
+
+        items.append(item)
+
+    return {
+        "expired": sum(1 for x in items if x["days_remaining"] < 0),
+        "expiring_7_days": sum(
+            1 for x in items if 0 <= x["days_remaining"] <= 7
+        ),
+        "expiring_30_days": sum(
+            1 for x in items if 0 <= x["days_remaining"] <= 30
+        ),
+        "items": items
+    }
 
 @router.get("/{sid}")
 def get_sub(sid: int, db=Depends(get_db), u=ANY):

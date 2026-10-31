@@ -167,14 +167,88 @@ async function dashboard(){const q=FILTER.f?`?date_from=${FILTER.f}&date_to=${FI
 /* ---------- subscriptions ---------- */
 const NEXT={draft:'Make quotation',quotation:'Confirm',confirmed:'Activate'},STAGES=['draft','quotation','confirmed','active','closed'];
 const stepper=s=>`<div class="steps">${STAGES.map((x,i)=>`<div class="${i<=STAGES.indexOf(s)?'done':''}">${x}</div>`).join('')}</div>`;
-async function subs(){const staff=ME.role!=='customer',qs=new URLSearchParams({size:SIZE,page:PG,...(FILTER.status?{status:FILTER.status}:{}),...(FILTER.q?{q:FILTER.q}:{})});const d=await api('subscriptions?'+qs);
- $('#main').innerHTML=head(staff?'Subscriptions':'My subscriptions',staff?'Every customer subscription and where it stands.':'See and manage your plans.',staff?`<button class="ghost" onclick="newFromTpl()">From template</button> <button onclick="newSub()">+ New subscription</button>`:'')+
- `<div class="tools"><select onchange="FILTER.status=this.value;PG=1;subs()"><option value="">All statuses</option>${STAGES.map(s=>`<option ${FILTER.status===s?'selected':''}>${s}</option>`)}</select><input placeholder="Search by number, e.g. SUB-00012" value="${esc(FILTER.q||'')}" onchange="FILTER.q=this.value;PG=1;subs()"></div>`+
- table(['number',...(staff?['customer_name']:[]),'plan_name','start_date','expiry_date','status'],d.items,r=>`<button class="sm ghost" onclick="viewSub(${r.id})">View</button>`+
-  (staff&&NEXT[r.status]?`<button class="sm" onclick="act('subscriptions/${r.id}/advance',subs,'Moved forward')">${NEXT[r.status]}</button>`:'')+
-  (r.status==='active'?(r.paused?`<button class="sm ghost" onclick="act('subscriptions/${r.id}/resume',subs,'Resumed')">Resume</button>`:`<button class="sm ghost" onclick="act('subscriptions/${r.id}/pause',subs,'Paused')">Pause</button>`):'')+
-  (['active','closed'].includes(r.status)?`<button class="sm ghost" onclick="act('subscriptions/${r.id}/renew',subs,'Renewed')">Renew</button>`:'')+
-  (r.status!=='closed'?`<button class="sm danger" onclick="act('subscriptions/${r.id}/close',subs,'Subscription closed','This will stop future invoices for ${esc(r.number)}.')">${staff?'Close':'Cancel'}</button>`:''),{customer_name:'customer',plan_name:'plan'})+pager(d,'subs()')}
+async function subs(){
+ const staff=ME.role!=='customer',
+ qs=new URLSearchParams({
+  size:SIZE,
+  page:PG,
+  ...(FILTER.status?{status:FILTER.status}:{}),
+  ...(FILTER.q?{q:FILTER.q}:{})
+ });
+
+ const [d, alerts] = await Promise.all([
+  api('subscriptions?' + qs),
+  api('subscriptions/expiry-alerts')
+ ]);
+
+ $('#main').innerHTML=
+ head(
+  staff?'Subscriptions':'My subscriptions',
+  staff?'Every customer subscription and where it stands.':'See and manage your plans.',
+  staff?`<button class="ghost" onclick="newFromTpl()">From template</button> <button onclick="newSub()">+ New subscription</button>`:''
+ )+
+ `<div class="tools">
+  <select onchange="FILTER.status=this.value;PG=1;subs()">
+   <option value="">All statuses</option>
+   ${STAGES.map(s=>`<option ${FILTER.status===s?'selected':''}>${s}</option>`)}
+  </select>
+  <input placeholder="Search by number, e.g. SUB-00012"
+   value="${esc(FILTER.q||'')}"
+   onchange="FILTER.q=this.value;PG=1;subs()">
+ </div>`+
+ `<div class="grid" style="margin-bottom:16px">
+  <div class="card">
+   <div class="sub">Already expired</div>
+   <h2 style="color:#dc2626">${alerts.expired}</h2>
+  </div>
+
+  <div class="card">
+   <div class="sub">Expiring within 7 days</div>
+   <h2 style="color:#ea580c">${alerts.expiring_7_days}</h2>
+  </div>
+
+  <div class="card">
+   <div class="sub">Expiring within 30 days</div>
+   <h2>${alerts.expiring_30_days}</h2>
+  </div>
+ </div>
+
+ <div class="card" style="margin-bottom:16px">
+  <h3 style="margin-top:0">Subscription Expiry Alerts</h3>
+
+  ${alerts.items.length ? alerts.items.map(a => `
+   <div style="padding:10px 0;border-bottom:1px solid var(--bd)">
+    <b>${esc(a.number)}</b>
+    <span style="margin-left:8px">
+     ${a.alert_type === 'expired'
+      ? '<span style="color:#dc2626">Expired</span>'
+      : a.alert_type === 'expiring_soon'
+      ? '<span style="color:#ea580c">Expiring soon</span>'
+      : '<span style="color:var(--pri)">Upcoming</span>'}
+    </span>
+    <div class="sub">
+     ${esc(a.customer_name || 'Your subscription')}
+     · Expires: ${a.expiry_date}
+     · ${a.days_remaining < 0
+      ? Math.abs(a.days_remaining) + ' days overdue'
+      : a.days_remaining + ' days remaining'}
+    </div>
+    <button class="sm ghost"
+     onclick="viewSub(${a.id})">View subscription</button>
+   </div>
+  `).join('') : '<p class="sub">No expiry alerts. All subscriptions are up to date!</p>'}
+ </div>`+
+ table(
+  ['number',...(staff?['customer_name']:[]),'plan_name','start_date','expiry_date','status'],
+  d.items,
+  r=>`<button class="sm ghost" onclick="viewSub(${r.id})">View</button>`+
+   (staff&&NEXT[r.status]?`<button class="sm" onclick="act('subscriptions/${r.id}/advance',subs,'Moved forward')">${NEXT[r.status]}</button>`:'')+
+   (r.status==='active'?(r.paused?`<button class="sm ghost" onclick="act('subscriptions/${r.id}/resume',subs,'Resumed')">Resume</button>`:`<button class="sm ghost" onclick="act('subscriptions/${r.id}/pause',subs,'Paused')">Pause</button>`):'')+
+   (['active','closed'].includes(r.status)?`<button class="sm ghost" onclick="act('subscriptions/${r.id}/renew',subs,'Renewed')">Renew</button>`:'')+
+   (r.status!=='closed'?`<button class="sm danger" onclick="act('subscriptions/${r.id}/close',subs,'Subscription closed','This will stop future invoices for ${esc(r.number)}.')">${staff?'Close':'Cancel'}</button>`:''),
+  {customer_name:'customer',plan_name:'plan'}
+ )+pager(d,'subs()')
+}
 async function act(p,reload,ok,confirmMsg){const run=async()=>{try{const r=await api(p,{method:'POST'});toast(typeof ok==='function'?ok(r):ok||'Done','ok');reload()}catch(e){toast(e.message,'bad')}};confirmMsg?ask(confirmMsg,'Yes, continue',run):run()}
 async function viewSub(id){const s=await api('subscriptions/'+id);open(`<h3 style="margin-top:0">${s.number} ${pill(s.status)}${s.paused?' '+pill('paused'):''}</h3>${stepper(s.status)}<p class="sub">${esc(s.customer_name)} · ${esc(s.plan_name)} · ${s.start_date} → ${s.expiry_date} · ${esc(s.payment_terms)}${s.quote_valid_until?` · quote valid until ${s.quote_valid_until}`:''}</p>
  ${table(['product_name','variant','quantity','unit_price','tax_rate','amount'],s.lines,null,{product_name:'product'})}<p><b>Lines total ${money(s.total)}</b> <span class="sub">before tax and discounts</span></p><button class="ghost" onclick="close()">Close</button>`)}
